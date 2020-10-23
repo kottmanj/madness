@@ -182,13 +182,13 @@ void Molecule::read(std::istream& f) {
             	symbol = tag;
             	atn = symbol_to_atomic_number(symbol);
             	charge = atn;
-            	if (atn == 0) ss >> charge; // Charge of ghost atom
             }
 
-            int atn = symbol_to_atomic_number(tag);
             //check if pseudo-atom or not
             bool psat = check_if_pseudo_atom(symbol);
+            if (atn == 0) ss >> charge; // Charge of ghost atom
             add_atom(xx,yy,zz,charge,atn,psat);
+
         }
     }
     throw "No end to the geometry in the input file";

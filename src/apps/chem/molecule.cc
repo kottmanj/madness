@@ -177,7 +177,7 @@ void Molecule::read(std::istream& f) {
             if (pos != std::string::npos) {
             	symbol = std::string(tag.begin(), tag.begin()+pos);
             	atn = symbol_to_atomic_number(symbol);
-            	double charge = std::stod(std::string(pos, tag.end()).erase(0,1));
+            	double charge = std::stod(std::string(tag.begin() + pos +1, tag.end()));
             }else{
             	symbol = tag;
             	atn = symbol_to_atomic_number(symbol);

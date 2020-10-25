@@ -252,8 +252,18 @@ int main(int argc, char** argv) {
 			unzipped_second.clear();
 			unzipped_third.clear();
 			if (cabs_option=="pno" || cabs_option=="mixed") {
-				if (pno_cabs_size==-1) pno_cabs_size = int(zipped.size());
-				for (int i=basis_size; i<pno_cabs_size; ++i) {
+				int pno_cbs_size = 0;
+				if (pno_cabs_size==-1) 
+					pno_cbs_size = int(zipped.size());
+				else { // cbs_size = cabs_size + obs_size 
+					pno_cbs_size = pno_cabs_size + basis_size;
+					if (pno_cbs_size>int(zipped.size())) {
+						std::cout << "Desired pno_cabs_size " << pno_cbs_size << " is smaller than number of available basis functions.";
+						std::cout << " Using only " << int(zipped.size()) << " available ones." << std::endl;
+						pno_cbs_size = int(zipped.size()); 
+					}
+				}
+				for (int i=basis_size; i<pno_cbs_size; ++i) {
 					unzipped_first.push_back(std::get<0>(zipped[i]));
 					unzipped_second.push_back(std::get<1>(zipped[i]));
 					unzipped_third.push_back(std::get<2>(zipped[i]));

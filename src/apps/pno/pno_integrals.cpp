@@ -471,8 +471,8 @@ int main(int argc, char** argv) {
 		auto gop = std::shared_ptr < real_convolution_3d > (madness::CoulombOperatorPtr(world, 1.e-6, parameters.op_thresh()));
 		auto fop = SlaterOperator(world, paramsint.gamma(), 1.e-6, parameters.op_thresh());
 
-		madness::Tensor<double> g(size_full, size_obs, size_full, size_obs); // using mulliken notation since thats more efficient to compute here: Tensor is (pq|g|rs) = <pr|g|qs>
-		madness::Tensor<double> f(size_full, size_obs, size_full, size_obs);
+		madness::Tensor<double> g(size_full, size_full, size_full, size_full); // using mulliken notation since thats more efficient to compute here: Tensor is (pq|g|rs) = <pr|g|qs>
+		madness::Tensor<double> f(size_full, size_full, size_full, size_full);
 
 		if(canonicalize){
 			if(world.rank()==0) std::cout << "canonicalizing!\n";
@@ -501,162 +501,75 @@ int main(int argc, char** argv) {
 		auto Jmat = J(basis, basis);
 		auto Kmat = K(basis, basis);
 
-		// Build tensors using symmetries (both Coulomb  and SlaterOperator are symmetric)  TODO maybe in separate function...
+		// Build tensors using symmetries (both Coulomb  and SlaterOperator are symmetric)
 		// pqrs = qprs = pqsr = qpsr && pqrs = rspq for full-size tensors
 		int non_zero=0, non_zero_f=0; // TODO check counting! probably far from correct as of now
 		if(world.rank() ==0 ) std::cout << "Compute G and F Tensor:\n";
 		for (int p=0; p<size_full; p++){
-			for (int q=0; q<size_obs; q++){
+			for (int q=0; q<=p; q++){
 				if (PQ[p][q].norm2() < h_thresh) continue;
-				// (NN|NN)-part, full symmetries (N<=size_obs)
-				if ((p < size_obs) && (q < size_obs)) {
-					if (p>=q) {
-						for (int r=0; r<size_obs; r++){
-							for (int s=0; s<=r; s++){
-								if ((p*size_obs+q >= r*size_obs+s)) {
-									// g-tensor
-									if (GPQ[r][s].norm2() >= h_thresh){
-										g(p,q,r,s) = PQ[p][q].inner(GPQ[r][s]);
-										if(canonicalize and p==q){
-											g(p,q,r,s) += Kmat(r,s) - Jmat(r,s);
-										}else if(canonicalize and r==s){
-											g(p,q,r,s) += Kmat(p,q) - Jmat(p,q);
-										}
-										// symm
-										g(r,s,p,q) = g(p,q,r,s);
-										if(std::fabs(g(p,q,r,s)) > h_thresh ){
-											if(world.rank()==0 and basis.size() < 3) std::cout << " g " << p  << " "<<  q  << " "<<  r  << " "<<  s << " = " << g(p,q,r,s) << "\n";
-											non_zero += (p!=r && q!=s)? 2 : 1;
-										}
-									}
-									// f12-tensor, only if cabs are used
-									if (cabs_switch and FPQ[r][s].norm2() >= h_thresh) {
-										f(p,q,r,s) = PQ[p][q].inner(FPQ[r][s]);
-										// symm
-										f(r,s,p,q) = f(p,q,r,s);
-										if(std::fabs(f(p,q,r,s)) > h_thresh ){
-											non_zero_f += (p!=r && q!=s)? 2 : 1;
-										}
-									}
-								}
-							}
-						}
-					}
-					// (NN|MN), M>size_obs
-					for (int r=size_obs; r<size_full; r++){
-						for (int s=0; s<size_obs; s++){
-							// g-tensor
-							if (GPQ[r][s].norm2() >= h_thresh)  {
-								g(p,q,r,s) = PQ[p][q].inner(GPQ[r][s]);
-								if(canonicalize and p==q){
-									g(p,q,r,s) += Kmat(r,s) - Jmat(r,s);
-								}else if(canonicalize and r==s){
-									g(p,q,r,s) += Kmat(p,q) - Jmat(p,q);
-								}
-								if(std::fabs(g(p,q,r,s)) > h_thresh ){
-									if(world.rank()==0 and basis.size() < 3) std::cout << " g " << p  << " "<<  q  << " "<<  r  << " "<<  s << " = " << g(p,q,r,s) << "\n";
-									++non_zero;
-								}
-							}
-							// f12-tensor
-							if (cabs_switch and FPQ[r][s].norm2() >= h_thresh) {
-								//f(p,q,r,s) = PQ[p][q].inner(FPQ[r][s]);
-								f(p,q,r,s) = PQ[p][q].inner(FPQ[r][s]);
-								if(std::fabs(f(p,q,r,s)) > h_thresh ){
-									++non_zero_f;
-								}
-							}
-						}
-					}
-				}
-				else if (p >= size_obs){
-					// (MN|MN), M>N
-					for (int r=size_obs; r<size_full; r++){
-						for (int s=0; s<=size_obs; s++){
-							if ((p*size_full+q >= r*size_full+s)) {
+					for (int r=0; r<size_full; r++){
+						for (int s=0; s<=r; s++){
+							if ((p*size_obs+q >= r*size_obs+s)) {
 								// g-tensor
-								if (GPQ[r][s].norm2() >= h_thresh)  {
+								if (GPQ[r][s].norm2() >= h_thresh){
 									g(p,q,r,s) = PQ[p][q].inner(GPQ[r][s]);
 									if(canonicalize and p==q){
 										g(p,q,r,s) += Kmat(r,s) - Jmat(r,s);
 									}else if(canonicalize and r==s){
 										g(p,q,r,s) += Kmat(p,q) - Jmat(p,q);
 									}
+									// symm
 									g(r,s,p,q) = g(p,q,r,s);
 									if(std::fabs(g(p,q,r,s)) > h_thresh ){
 										if(world.rank()==0 and basis.size() < 3) std::cout << " g " << p  << " "<<  q  << " "<<  r  << " "<<  s << " = " << g(p,q,r,s) << "\n";
-										++non_zero;
+										non_zero += (p!=r && q!=s)? 2 : 1;
 									}
 								}
-								// f12-tensor
+								// f12-tensor, only if cabs are used
 								if (cabs_switch and FPQ[r][s].norm2() >= h_thresh) {
 									f(p,q,r,s) = PQ[p][q].inner(FPQ[r][s]);
+									// symm
 									f(r,s,p,q) = f(p,q,r,s);
 									if(std::fabs(f(p,q,r,s)) > h_thresh ){
-										++non_zero_f;
+										non_zero_f += (p!=r && q!=s)? 2 : 1;
 									}
 								}
 							}
 						}
 					}
-					// (MN|NN)
-					for (int r=0; r<size_obs; r++){
-						for (int s=0; s<size_obs; s++){
-							// g-tensor
-							if (GPQ[r][s].norm2() >= h_thresh)  {
-								g(p,q,r,s) = PQ[p][q].inner(GPQ[r][s]);
-								if(canonicalize and p==q){
-									g(p,q,r,s) += Kmat(r,s) - Jmat(r,s);
-								}else if(canonicalize and r==s){
-									g(p,q,r,s) += Kmat(p,q) - Jmat(p,q);
-								}
-								if(std::fabs(g(p,q,r,s)) > h_thresh ){
-									if(world.rank()==0 and basis.size() < 3) std::cout << " g " << p  << " "<<  q  << " "<<  r  << " "<<  s << " = " << g(p,q,r,s) << "\n";
-									++non_zero;
-								}
-							}
-							// f12-tensor
-							if (cabs_switch and FPQ[r][s].norm2() >= h_thresh) {
-								f(p,q,r,s) = PQ[p][q].inner(FPQ[r][s]);
-								if(std::fabs(f(p,q,r,s)) > h_thresh ){
-									++non_zero_f;
-								}
-							}
-						}
-					}
 				}
 			}
-		}
 		// Assemble full g,f from symmetries (misses pqrs->qpsr)
 		if (world.rank()==0) std::cout << "Assemble g,f using symmetries..." << std::endl;
-		for (int p=0; p<size_obs; p++) {
+		for (int p=0; p<size_full; p++) {
 			for (int q=0; q<=p; q++) {
-				if (PQ[p][q].norm2() < h_thresh) continue; for (int r=0; r<size_obs; r++){
-					for (int s=0; s<=r; s++){
-						// g-tensor
-						g(p,q,s,r) = g(p,q,r,s);
-						g(q,p,r,s) = g(p,q,r,s);
-						g(q,p,s,r) = g(p,q,r,s);
-						if      (p==q && r==s) non_zero += 0;
-						else if (p==q && r!=s) non_zero += 1;
-						else if (p!=q && r==s) non_zero += 1;
-						else if (p!=q && r!=s) non_zero += 3;
-						non_zero += (p==q && r==s) ? 0 : 3;
-						// f12-tensor
-						if (cabs_switch) {
-							f(p,q,s,r) = f(p,q,r,s);
-							f(q,p,r,s) = f(p,q,r,s);
-							f(q,p,s,r) = f(p,q,r,s);
-							if      (p==q && r==s) non_zero_f += 0;
-							else if (p==q && r!=s) non_zero_f += 1;
-							else if (p!=q && r==s) non_zero_f += 1;
-							else if (p!=q && r!=s) non_zero_f += 3;
+				if (PQ[p][q].norm2() < h_thresh) continue; 
+					for (int r=0; r<size_full; r++){
+						for (int s=0; s<=r; s++){
+							// g-tensor
+							g(p,q,s,r) = g(p,q,r,s);
+							g(q,p,r,s) = g(p,q,r,s);
+							g(q,p,s,r) = g(p,q,r,s);
+							if      (p==q && r==s) non_zero += 0;
+							else if (p==q && r!=s) non_zero += 1;
+							else if (p!=q && r==s) non_zero += 1;
+							else if (p!=q && r!=s) non_zero += 3;
+							non_zero += (p==q && r==s) ? 0 : 3;
+							// f12-tensor
+							if (cabs_switch) {
+								f(p,q,s,r) = f(p,q,r,s);
+								f(q,p,r,s) = f(p,q,r,s);
+								f(q,p,s,r) = f(p,q,r,s);
+								if      (p==q && r==s) non_zero_f += 0;
+								else if (p==q && r!=s) non_zero_f += 1;
+								else if (p!=q && r==s) non_zero_f += 1;
+								else if (p!=q && r!=s) non_zero_f += 3;
 						}
 					}
 				}
 			}
 		}
-
 
 		int non_zero_h = 0;
 

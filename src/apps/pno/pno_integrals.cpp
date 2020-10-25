@@ -436,7 +436,7 @@ int main(int argc, char** argv) {
 			// Get CABS from rest-pnos or external basis
 			if (cabs_option == "gbs" || cabs_option == "mixed") {
 				cabs = pno.f12.read_cabs_from_file(paramf12.auxbas_file());
-			}
+			}	
 			if (cabs_option == "pno" || cabs_option == "mixed") {
 				cabs.insert(cabs.begin(), rest_pnos.begin(), rest_pnos.end());
 			}
@@ -592,8 +592,8 @@ int main(int argc, char** argv) {
 			auto V = madness::Nuclear(world, &nemo);
 			h = T(basis,basis) + V(basis,basis);
 		}
-		for (int i=0;i<basis.size();++i){
-			for (int j=0;j<basis.size();++j){
+		for (int i=0;i<size_full;++i){
+			for (int j=0;j<size_full;++j){
 				if(std::fabs(h(i,j)) > h_thresh){
 					if(world.rank()==0 and basis.size() < 3) std::cout << " h " << i << " "<< j << " "<< h(i,j) << "\n";
 					++non_zero_h;

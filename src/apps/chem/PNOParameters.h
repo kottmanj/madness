@@ -96,6 +96,7 @@ public:
 		initialize<bool>("no_opt_in_first_iteration", false, "Do not optimize in the first iteration (then the potentials do not have to be evaluated, use this for large guesses)");
 		initialize<std::string>("exchange", "full", "approximate exchange with 'neglect' or xc functional -> same syntax as moldft");
 		initialize<bool>("save_pnos",true, "Save the OBS-PNOs to a file, before and after orthonormalization.");
+		initialize<bool>("diagonal", false, "Compute only diagonal PNOs");
 	}
 
 	void set_derived_values(const Molecule& molecule) {
@@ -146,6 +147,7 @@ public:
 		}
 		return result;
 	}
+	bool diagonal()const {return get<bool>("diagonal");}
 	std::string exchange()const {return get<std::string>("exchange");}
 	bool exop_trigo()const { return get<bool >("exop_trigo");}
 	int rank_increase()const { return get<int >("rank_increase");}
@@ -170,7 +172,7 @@ public:
 			ss>>pw_string;
 			std::vector<int> numbers(pw_string.size()/2);
 			std::vector<char> control = {'s', 'p', 'd', 'f', 'g', 'h', 'i', 'k'};
-			for (int i=0; i<pw_string.size()/2; ++i){
+			for (size_t i=0; i<pw_string.size()/2; ++i){
 				char l = pw_string[2*i+1];
 				char n = pw_string[2*i];
 				MADNESS_ASSERT(l==control[i]);
@@ -301,7 +303,7 @@ public:
 
 
 	void initialize_pnoint_parameters() {
-		initialize<std::string>("orthog", "symmetric", "orthogonalization method for PNO basis, also current default for a potential CABS. options: symmetric, canonical, cholesky, rr_cholesky,  ");
+		initialize<std::string>("orthog", "cholesky", "orthogonalization method for PNO basis, also current default for a potential CABS. options: symmetric, canonical, cholesky, rr_cholesky,  ");
 		initialize<std::string>("orthog_cabs", "default", "orthogonalization method for CABS basis. options: symmetric, canonical, cholesky, rr_cholesky, uses same as orbitals basis if default.");
 		initialize<int>("n_pno", 10, "desired size of PNO-basis (orbital space)");
 		initialize<std::string>("cabs_option", "none", "type of complementary auxiliary basis to be used. can be none ~ no CABS, gbs ~ Gaussian basis set as CABS, requires input via auxbas_file, pno ~ use superfluous PNOs as CABS, mixed ~ gbs&pno-option");
@@ -313,8 +315,9 @@ public:
 		initialize<double>("cabs_thresh",1.e-4, " thresh for cabs part ");
 		initialize<std::string>("auxbas", "none", "atom centered partial wave guess of format like 'h-2s1p-o-3s2p1d' ");
 		initialize<std::string>("auxbas_file", "none", "Use external comp. aux. basis in addition to the pnos as auxbasis. Give the filename as parameter. Give the auxbas in turbomole format. Don't use contractions. If a file is specified the auxbas parameter has no effect");
-		initialize<bool>("print_pno_overlap", false, "Print overlap matrix at certain steps in computation, for debugging purposes.");
-		initialize<int>("n_virt", 0, "Compute this number of virtuals and include them in the integral construction.");
+		initialize<bool>("print_pno_overlap", true, "Print overlap matrix at certain steps in computation, for debugging purposes.");
+		initialize<int>("n_virt", 0, "Compute this number of virtuals and include them in the integral construction, experimental and not robust!.");
+		initialize<bool>("hardcore_boson", false, "compute only integrals for hardcore boson hamiltonian (restricted to double occupations)");
 	}
 
 	int n_virt()const {return get<int>("n_virt");}
@@ -326,6 +329,7 @@ public:
 			return get<std::string>("orthog_cabs");
 	}
 
+	bool hardcore_boson()const{return get<bool>("hardcore_boson");}
 	std::string cabs_option()const { return get<std::string>("cabs_option");}
 	int n_pno()const { return get<int >("n_pno");}
 	int pno_cabs_size()const { return get<int >("pno_cabs_size");}

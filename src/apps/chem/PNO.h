@@ -43,6 +43,9 @@ public:
         poisson = std::shared_ptr<real_convolution_3d>(CoulombOperatorPtr(
                 world, nemo.get_calc()->param.lo(),param.op_thresh()));
         MADNESS_ASSERT(param.freeze() == f12.param.freeze());
+		if(nemo.ncf->type() != madness::NuclearCorrelationFactor::None){
+			MADNESS_EXCEPTION("Nuclear Correlation Factors not yet supported. Add ncf (none,1.0) to your dft input",1);
+		}
     }
 
     /// Compute the projected MP2 energies: 2<ij|g|uij> - <ji|g|uij> for all pairs
@@ -235,7 +238,7 @@ public:
     ElectronPairIterator pit()const{ return f12.pit();} /// convenience
     OrbitalIterator oit()const{return OrbitalIterator(nemo.get_calc()->amo.size(),param.freeze());}
     F12Potentials f12; // used to be private
-private:
+public:
     World& world;
     PNOParameters param;  ///< calculation parameters
     Nemo nemo;

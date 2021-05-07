@@ -34,6 +34,23 @@ const std::string TAG_CP = "computeprotocol";
 // this needs to be added to include
 #include "NumCpp.hpp"
 
+template<typename T1, typename T2>
+std::ostream& operator << (std::ostream& os, const std::pair<T1,T2>& v){
+    os << "(" << v.first << "," << v.second << ")";
+    return os;
+}
+
+
+template<typename T>
+std::ostream& operator << (std::ostream& os, const std::vector<T>& v){
+    os << "[";
+    for(auto i=0; i<v.size();++i){
+        os << v[i] << " ";
+    }
+    os << "]";
+    return os;
+}
+
 // Function for orthogonalization of a basis
 std::vector<real_function_3d> orthonormalize_basis(const std::vector<real_function_3d> &basis, const std::string orthogonalization,
 		const double thresh, World& world, const bool print_out) {
@@ -80,6 +97,7 @@ int main(int argc, char** argv) {
 
 		startup(world,argc,argv,true);
 		print_meminfo(world.rank(), "startup");
+        FunctionDefaults<3>::set_pmap(pmapT(new LevelPmap< Key<3> >(world)));
 
 		// Get the name of the input file (if given)
 		const std::string input = (argc > 1) ? argv[1] : "input";
@@ -96,16 +114,8 @@ int main(int argc, char** argv) {
 			std::cout << "\n\n";
 
 			std::cout << "This script will run PNO-MP2 and print out tensors in binary\n";
-			//std::cout << "Call as: pno_integrals inputfile orthogonalization basis_size";
 			std::cout << "Call as: pno_integrals inputfile";
 			std::cout << "input is " << input << "\n";
-			//std::cout << "orthogonalization is " << orthogonalization << "\n";
-			//std::cout << "basis size is " << basis_size << "\n";
-			//std::cout << "using CABS-option: " << cabs_option << "\n";
-			//std::cout << "with pno-OBS-size: " << pno_obs_size << "\n";
-
-			//std::cout << "only diag is " << only_diag << "\n";
-			//std::cout << "cherry_pick is " << cherry_pick << "\n";
 		}
 
 		// Compute the SCF Reference
@@ -117,6 +127,10 @@ int main(int argc, char** argv) {
 		if (world.rank() == 0) print("nemo energy: ", scf_energy);
 		if (world.rank() == 0) printf(" at time %.1f\n", wall_time());
 		const double time_scf_end = wall_time();
+		// assert that no nemo corrfactor is actually used (not yet supported in PNO-MP2)
+		if(nemo.ncf->type() != madness::NuclearCorrelationFactor::None){
+			MADNESS_EXCEPTION("Nuclear Correlation Factors not yet supported in MRA-PNOs. Add ncf (none,1.0) to your dft input",1);
+		}
 
 		// Compute MRA-PNO-MP2-F12
 		const double time_pno_start = wall_time();
@@ -125,8 +139,7 @@ int main(int argc, char** argv) {
 		PNOIntParameters paramsint(world, input, parameters, TAG_PNOInt);
 		paramsint.print("PNO Integrals evaluated as:\npnoint","end");
 		PNO pno(world, nemo, parameters, paramf12);
-		std::vector<PNOPairs> all_pairs;
-		pno.solve(all_pairs);
+		pno.solve();
 		const double time_pno_end = wall_time();
 
 
@@ -140,6 +153,17 @@ int main(int argc, char** argv) {
 			std::cout << std::setw(25) << "energy scf" << " = " << scf_energy << "\n";
 			std::cout << "--------------------------------------------------\n";
 		}
+
+		if(world.rank()==0){
+			std::cout << "restarting PNO to reload pairs that converged before and were frozen\n";
+		}
+		pno.param.set_user_defined_value<std::string>("restart", "all");
+		pno.param.set_user_defined_value<std::string>("no_opt", "all");
+		pno.param.set_user_defined_value<std::string>("no_guess", "all");
+		pno.param.set_user_defined_value<std::string>("adaptive_solver", "none");
+		std::vector<PNOPairs> all_pairs;
+		pno.solve(all_pairs);
+
 		double mp2_energy = 0.0;
 		if(world.rank()==0) std::cout<< std::setw(25) << "time pno" << " = " << time_pno_end - time_pno_start << "\n";
 		for(const auto& pairs: all_pairs){
@@ -171,10 +195,9 @@ int main(int argc, char** argv) {
 
 		const std::string orthogonalization = paramsint.orthogonalization();
 		if (world.rank()==0) std::cout << "Orthonormalization technique used: " << orthogonalization << std::endl;
-		const bool canonicalize = orthogonalization == "canonical";
 		const bool orthogonalize = orthogonalization != "none";
-		const double h_thresh = 1.e-4;
-		const double thresh = parameters.thresh();
+		const double h_thresh = 1.e-7; // neglect integrals
+		double thresh = parameters.thresh();
 
 		const std::string cabs_option = paramsint.cabs_option();
 		bool cabs_switch = false;
@@ -185,13 +208,14 @@ int main(int argc, char** argv) {
 			else if (!cabs_switch) std::cout << "No CABS used." << std::endl;
 		}
 		const bool only_diag = paramsint.only_diag();
-		const int basis_size = paramsint.n_pno();
 		int pno_cabs_size = paramsint.pno_cabs_size();
 
-		if(world.rank()==0) std::cout << "Tightening thresholds to 1.e-6 for post-processing\n";
-		FunctionDefaults<3>::set_thresh(1.e-6);
+		thresh = std::min(thresh, 1.e-4);
+		if(world.rank()==0) std::cout << "Tightening thresholds to " << thresh << " for post-processing\n";
+		FunctionDefaults<3>::set_thresh(thresh);
 
 		vecfuncT reference = nemo.get_calc()->amo;
+		const int pno_obs_size = paramsint.n_pno();
 		vecfuncT obs_pnos;
 		std::vector<real_function_3d> rest_pnos;
 		std::vector<double> occ;
@@ -207,9 +231,9 @@ int main(int argc, char** argv) {
 			if (not is_gs){
 				const auto& x = pairs.cis.x;
 				reference.insert(reference.end(), x.begin(), x.end());
-				name = "ex" + std::to_string(pairs.cis.number);
+				name = "molecule_ex_" + std::to_string(pairs.cis.number);
 			}else{
-				name = "gs";
+				name = "molecule";
 			}
 
 			std::vector<real_function_3d> all_current_pnos;
@@ -229,16 +253,19 @@ int main(int argc, char** argv) {
 			}
 
 			std::vector<std::tuple<double, real_function_3d, std::pair<size_t,size_t> > > zipped;
-			for (auto i=0; i< all_current_pnos.size(); ++i){
+			for (auto i=0; i<all_current_pnos.size(); ++i){
 				zipped.push_back(std::make_tuple(occ[i], all_current_pnos[i], pno_ids[i]));
 			}
 
 			std::sort(zipped.begin(), zipped.end(), [](const auto& i, const auto& j) { return std::get<0>(i) > std::get<0>(j); });
 
+			if (pno_obs_size > all_current_pnos.size()) {
+				if (world.rank()==0) std::cout << "Number of PNOs requested ("<< pno_obs_size << ") must not be larger than number of available PNOs (" << all_current_pnos.size() << ")." << std::endl;
+			}
 			std::vector<double> unzipped_first;
 			std::vector<real_function_3d> unzipped_second;
 			std::vector<std::pair<size_t,size_t> > unzipped_third;
-			for (auto i=0; i<basis_size;++i){
+			for (auto i=0; i<pno_obs_size; ++i){
 				unzipped_first.push_back(std::get<0>(zipped[i]));
 				unzipped_second.push_back(std::get<1>(zipped[i]));
 				unzipped_third.push_back(std::get<2>(zipped[i]));
@@ -256,14 +283,14 @@ int main(int argc, char** argv) {
 				if (pno_cabs_size==-1) 
 					pno_cbs_size = int(zipped.size());
 				else { // cbs_size = cabs_size + obs_size 
-					pno_cbs_size = pno_cabs_size + basis_size;
+					pno_cbs_size = pno_cabs_size + pno_obs_size;
 					if (pno_cbs_size>int(zipped.size())) {
 						std::cout << "Desired pno_cabs_size " << pno_cbs_size << " is smaller than number of available basis functions.";
 						std::cout << " Using only " << int(zipped.size()) << " available ones." << std::endl;
 						pno_cbs_size = int(zipped.size()); 
 					}
 				}
-				for (int i=basis_size; i<pno_cbs_size; ++i) {
+				for (int i=pno_obs_size; i<pno_cbs_size; ++i) {
 					unzipped_first.push_back(std::get<0>(zipped[i]));
 					unzipped_second.push_back(std::get<1>(zipped[i]));
 					unzipped_third.push_back(std::get<2>(zipped[i]));
@@ -298,6 +325,7 @@ int main(int argc, char** argv) {
 
 		if(world.rank()==0){
 			std::cout << "Before cherry pick" << std::endl;
+			std::cout << "rank is " << world.rank() << "\n";
 			std::cout << "all used occupation numbers:\n" << occ << std::endl;
 			std::cout << "corresponding to active pairs:\n" << pno_ids << std::endl;
 			if (cabs_option=="pno" || cabs_option=="mixed") {
@@ -340,8 +368,9 @@ int main(int argc, char** argv) {
 		}
 
 		// will include CIS orbitals for excited states
-		if(world.rank()==0) std::cout << "Adding " << reference.size() << " Reference orbitals\n";
+		if(world.rank()==0) std::cout << "Adding " << reference.size() << " HF orbitals\n";
 		basis.insert(basis.begin(), reference.begin(), reference.end());
+
 
 		// include virtual orbitals if demanded
 		// not the most elegant solution ... but lets see if we need this first
@@ -444,8 +473,6 @@ int main(int argc, char** argv) {
 			if (!cabs.empty()) {
 				if(world.rank()==0) std::cout << "Found CABS..." << std::endl;
 				MyTimer time2 = MyTimer(world).start();
-				// Project out reference
-				//cabs = Q(cabs);
 				// Project out {pno} + ref
 				auto pno_plus_ref = basis;
 				if(world.rank()==0) std::cout << "\tProject out PNO + ref" << std::endl;
@@ -484,15 +511,6 @@ int main(int argc, char** argv) {
 		madness::Tensor<double> g(size_full, size_full, size_full, size_full); // using mulliken notation since thats more efficient to compute here: Tensor is (pq|g|rs) = <pr|g|qs>
 		madness::Tensor<double> f(size_full, size_full, size_full, size_full);
 
-		if(canonicalize){
-			if(world.rank()==0) std::cout << "canonicalizing!\n";
-			auto F = madness::Fock(world, &nemo);
-			const auto Fmat = F(basis, basis);
-			Tensor<double> U, evals;
-			syev(Fmat, U, evals);
-			basis = madness::transform(world, basis, U);
-		}
-
 		std::vector<vecfuncT> PQ;
 		for (const auto& x : basis){
 			PQ.push_back(madness::truncate(x*basis,thresh));
@@ -521,14 +539,18 @@ int main(int argc, char** argv) {
 					for (int r=0; r<size_full; r++){
 						for (int s=0; s<=r; s++){
 							if ((p*size_obs+q >= r*size_obs+s)) {
+								if(paramsint.hardcore_boson()){
+									const auto c1 = p==q and r==s;
+									const auto c2 = p==r and q==s;
+									const auto c3 = p==s and q==r;
+									if (not(c1 or c2 or c3)){
+										continue;
+									}
+								}
+
 								// g-tensor
 								if (GPQ[r][s].norm2() >= h_thresh){
 									g(p,q,r,s) = PQ[p][q].inner(GPQ[r][s]);
-									if(canonicalize and p==q){
-										g(p,q,r,s) += Kmat(r,s) - Jmat(r,s);
-									}else if(canonicalize and r==s){
-										g(p,q,r,s) += Kmat(p,q) - Jmat(p,q);
-									}
 									// symm
 									g(r,s,p,q) = g(p,q,r,s);
 									if(std::fabs(g(p,q,r,s)) > h_thresh ){
@@ -584,10 +606,7 @@ int main(int argc, char** argv) {
 		int non_zero_h = 0;
 
 		Tensor<double> h;
-		if(canonicalize){
-			auto F = madness::Fock(world, &nemo);
-			h = F(basis, basis);
-		}else{
+		{
 			auto T = madness::Kinetic<double, 3>(world);
 			auto V = madness::Nuclear(world, &nemo);
 			h = T(basis,basis) + V(basis,basis);
@@ -629,6 +648,11 @@ int main(int argc, char** argv) {
 			if(paramsint.print_pno_overlap()) {
 				if(world.rank()==0) std::cout << "Overlap over whole basis\n" << S << "\n";
 			}
+			for (auto x=0;x<basis.size();++x){
+				S(x,x) -=1.0;
+			}
+			const double offdiag=S.normf();
+			if (world.rank()==0) std::cout << "||S-1||=" << offdiag << "\n";
 			if (not orthogonalize) {
 				S = S.flat();
 				nc::NdArray<double> gg(S.ptr(), S.size(), 1);
@@ -636,15 +660,15 @@ int main(int argc, char** argv) {
 			}
 		}
 
-		auto Fop =  madness::Fock(world, &nemo);
-		auto F = Fop(basis, basis);
-		if(world.rank()==0) std::cout << "F\n" << F << "\n";
 
 		world.gop.fence();
 		if (world.rank() == 0) printf("finished at time %.1f\n", wall_time());
 
-		print_stats(world);
-	}
+	      // Nearly all memory will be freed at this point
+	    world.gop.fence();
+	    world.gop.fence();
+	    print_stats(world);
+	    } // world is dead -- ready to finalize
 	finalize();
 
 	return 0;
